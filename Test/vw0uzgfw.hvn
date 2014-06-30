@@ -1,0 +1,597 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using BattleshipAI;
+using System.ComponentModel.Composition;
+
+namespace Battleship
+{
+    
+    public class BattleshipPlayAI_Hard : IBattleshipPlayAI
+    {
+        private int[,] battleShipBoard = new int[Constants.XMAX, Constants.YMAX];
+        private static bool[] destroyedBoats = new bool[Constants.noOfBoats];
+        private static List<Coordinate> hitCoordinates = new List<Coordinate>();
+        private static List<Coordinate> toVisitLater = new List<Coordinate>();
+
+
+        /// <summary>
+        /// Gives the next valid move based on the previous move (if any).
+        /// </summary>
+        /// <param name="prevHit">The coordinates of the previous hit</param>
+        /// <param name="hitResult">The result of the previous hit (1-Hit/2-Miss)</param>
+        /// <param name="boatDestroyed">The boat which was destroyed in the previous hit, if any</param>
+        /// <returns>Coordinates of the next hit.</returns>
+        public Coordinate GetMove(Coordinate prevHit, int hitResult, Boats boatDestroyed)
+        {
+            Coordinate target = new Coordinate();
+
+            if (prevHit == null)
+            {
+                //First Move
+                //Console.Write("Working");
+                init();
+                //Target for the first move
+                return HuntMode();
+            }
+
+            battleShipBoard[prevHit.x, prevHit.y] = hitResult;
+            if (hitResult == 1)
+            {   //Hit
+                hitCoordinates.Add(prevHit);
+                return TargetMode(prevHit, hitResult, boatDestroyed);
+            }
+            else if (hitResult == 2)
+            {   //Miss
+                if (hitCoordinates.Count == 0 && toVisitLater.Count == 0)
+                {
+                    return HuntMode();
+                }
+                return TargetMode(prevHit, hitResult, boatDestroyed);
+            }
+            else
+            {
+                Console.Write("Error");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Hunt mode for the Hard AI (Uses probability)
+        /// </summary>
+        /// <returns>Valid coordinate for the next move</returns>
+        public Coordinate HuntMode()
+        {
+            //For hunt mode, calculate the probability for each box
+            int[,] probability = new int[Constants.XMAX, Constants.YMAX];
+            calculateProbabilityHuntMode(probability);
+            //Calculating the box with maximum probability
+            int maxProb = 0;
+            List<Coordinate> maxProbCoordinates = new List<Coordinate>();
+            for (int i = 0; i < Constants.XMAX; i++)
+            {
+                for (int j = 0; j < Constants.YMAX; j++)
+                {
+                    if (probability[i, j] > maxProb)
+                    {
+                        maxProbCoordinates = new List<Coordinate>();
+                        maxProbCoordinates.Add(new Coordinate(i, j));
+                        maxProb = probability[i, j];
+                    }
+                    else if (probability[i, j] == maxProb)
+                    {
+                        maxProbCoordinates.Add(new Coordinate(i, j));
+                    }
+                }
+            }
+
+            var random = new Random(int.Parse(Guid.NewGuid().ToString().Substring(0, 8), System.Globalization.NumberStyles.HexNumber));
+            return maxProbCoordinates[(int)random.Next(maxProbCoordinates.Count)];
+
+        }
+
+        /// <summary>
+        /// Calculates the probability (no of possibilities) of boat occupying a given coordinate according to the current status of the board
+        /// This is for Hunt mode only.
+        /// </summary>
+        /// <param name="probability">Probability matrix passed as reference</param>
+        public void calculateProbabilityHuntMode(int[,] probability)
+        {
+            for (int k = 0; k < Constants.noOfBoats; k++)
+            {
+                if (destroyedBoats[k])
+                {
+                    continue;
+                }
+                int boatLength = Constants.boatLength[k];
+                for (int i = 0; i < Constants.XMAX; i++)
+                {
+                    for (int j = 0; j < Constants.YMAX; j++)
+                    {
+                        if (battleShipBoard[i, j] != 0)
+                        {
+                            continue;
+                        }
+
+                        int left = 0, right = 0, top = 0, bottom = 0;
+
+                        //For top
+                        while (i - (top + 1) >= 0 && battleShipBoard[i - (top + 1), j] == 0 && top + 1 < boatLength)
+                        {
+                            top++;
+                        }
+
+                        //For bottom
+                        while (i + bottom + 1 < Constants.XMAX && battleShipBoard[i + bottom + 1, j] == 0 && bottom + 1 < boatLength)
+                        {
+                            bottom++;
+                        }
+
+                        //For right
+                        while (j + right + 1 < Constants.YMAX && battleShipBoard[i, j + right + 1] == 0 && right + 1 < boatLength)
+                        {
+                            right++;
+                        }
+
+                        //For left
+                        while (j - (left + 1) >= 0 && battleShipBoard[i, j - (left + 1)] == 0 && left + 1 < boatLength)
+                        {
+                            left++;
+                        }
+
+                        int vertical = 0, horizontal = 0;
+
+                        //For horizontal
+                        if (left + right + 1 < boatLength)
+                        {
+                            horizontal = 0;
+                        }
+                        else
+                        {
+                            horizontal = (left < right) ? left : right;
+                            if (left >= boatLength - 1 || right >= boatLength - 1)
+                            {
+                                horizontal++;
+                            }
+                        }
+
+                        //For vertical
+                        if (top + bottom + 1 < boatLength)
+                        {
+                            vertical = 0;
+                        }
+                        else
+                        {
+                            vertical = (top < bottom) ? top : bottom;
+                            if (top >= boatLength - 1 || bottom >= boatLength - 1)
+                            {
+                                vertical++;
+                            }
+                        }
+
+                        probability[i, j] += horizontal + vertical;
+
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Given to coordinates, finds the direction from start to end
+        /// </summary>
+        /// <param name="start">Starting Coordinate</param>
+        /// <param name="end">Ending Coordinate</param>
+        /// <returns>The direction ('u':up, 'd':down, 'r':right, 'l':left)</returns>
+        private char findDirection(Coordinate start, Coordinate end)
+        {
+            char dir;
+            if (start.x != end.x)
+            {
+                dir = (start.x < end.x) ? 'd' : 'u';
+            }
+            else if (start.y != end.y)
+            {
+                dir = (start.y < end.y) ? 'r' : 'l';
+            }
+            else { dir = 'e'; }
+            return dir;
+        }
+
+        /// <summary>
+        /// Given a starting coordinate and a direction, will give a valid move (For target mode only)
+        /// </summary>
+        /// <param name="start"></param>
+        /// <param name="direction"></param>
+        /// <returns>Coordinate of the move</returns>
+        private Coordinate getValidMove(Coordinate start, char direction)
+        {
+            int i = start.x, j = start.y;
+            Coordinate validmove = null;
+            bool flag = false;
+            switch (direction)
+            {
+                case 'u':
+                    while (i - 1 >= 0)
+                    {
+                        i--;
+                        flag = false;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(i, j));
+                            if (flag)
+                            { break; }
+
+                        }
+                        if (!flag)
+                        { break; }
+                    }
+                    break;
+                case 'd':
+                    while (i + 1 < Constants.XMAX)
+                    {
+                        i++;
+                        flag = false;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(i, j));
+                            if (flag)
+                            { break; }
+
+                        }
+                        if (!flag)
+                        { break; }
+                    }
+
+                    break;
+                case 'l':
+                    while (j - 1 >= 0)
+                    {
+                        j--;
+                        flag = false;
+
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(i, j));
+                            if (flag)
+                            { break; }
+
+                        }
+                        if (!flag)
+                        { break; }
+                    }
+                    break;
+                case 'r':
+                    while (j + 1 < Constants.YMAX)
+                    {
+                        j++;
+                        flag = false;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(i, j));
+                            if (flag)
+                            { break; }
+
+                        }
+                        if (!flag)
+                        { break; }
+                    }
+                    break;
+            }
+            if (battleShipBoard[i, j] == 0)
+            { validmove = new Coordinate(i, j); }
+            return validmove;
+        }
+
+        /// <summary>
+        /// Target mode for the Hard AI (Triggered after a Hit, will go until atleast one boat is destroyed.
+        /// </summary>
+        /// <param name="prevHit"></param>
+        /// <param name="hitResult"></param>
+        /// <param name="boatDestroyed"></param>
+        /// <returns></returns>
+        private Coordinate TargetMode(Coordinate prevHit, int hitResult, Boats boatDestroyed)
+        {
+            //code for target mode.. three scenarios
+            if (hitResult == 2)
+            {
+                //1. It was a miss, but prev the game was in target mode: pick a point in hitcoordinates and go in that direction 
+                //for as valid GetMove if no push all the hitcoordinates to tovisitlater and start with a coordinate
+                if (hitCoordinates.Count == 1)
+                {
+                    return GetProbOfFour(hitCoordinates.ElementAt(0));
+                }
+                Coordinate lastHit = hitCoordinates.ElementAt(hitCoordinates.Count - 1);
+                char direction = findDirection(prevHit, lastHit);
+                Coordinate toHitNext = getValidMove(prevHit, direction);
+                if (toHitNext == null)
+                {
+                    foreach (var item in hitCoordinates)
+                    {
+                        toVisitLater.Add(item);
+                    }
+                    hitCoordinates.Clear();
+                    hitCoordinates.Add(toVisitLater.ElementAt(0));
+                    toVisitLater.Remove(toVisitLater.ElementAt(0));
+                    toHitNext = GetProbOfFour(hitCoordinates.ElementAt(0));
+                }
+                return toHitNext;
+            }
+            else if (hitResult == 1)
+            {
+                // if it a hit
+                if (boatDestroyed != Boats.none)
+                {
+                    // if boats destroyed remove the boats coordinate
+                    int boatLength = Constants.boatLength[(int)boatDestroyed];
+                    destroyedBoats[(int)boatDestroyed] = true;
+
+
+                    char direction = findDirection(prevHit, hitCoordinates.ElementAt(0));
+                    removeBoatCoordinates(prevHit, direction, boatLength);
+
+                    //if hitCoordinates has more coordinate follow the trend else take a element from toVisitLater
+                    //if both has no element go in the hunt mode
+                    if (hitCoordinates.Count == 0 && toVisitLater.Count == 0)
+                    {
+                        return HuntMode();
+                    }
+                    if (hitCoordinates.Count == 0)
+                    {
+                        hitCoordinates.Add(toVisitLater.ElementAt(0));
+                        toVisitLater.Remove(toVisitLater.ElementAt(0));
+                        return GetProbOfFour(hitCoordinates.ElementAt(0));
+                    }
+                    else if (hitCoordinates.Count == 1)
+                    {
+                        return GetProbOfFour(hitCoordinates.ElementAt(0));
+                    }
+                    else
+                    {
+                        return followTrend(hitCoordinates.ElementAt(0), hitCoordinates.ElementAt(1));
+                    }
+                }
+                else
+                {
+                    //3. It was a hit, no boats destroyed : follow the trend
+                    //if no valid move push hitcoordinates to toVisitLater andd start with the first of toVisitlater
+                    if (hitCoordinates.Count() == 1)
+                    {
+                        return GetProbOfFour(hitCoordinates.ElementAt(0));
+                    }
+                    else
+                    {
+                        return followTrend(prevHit, hitCoordinates.ElementAt(0));
+                    }
+                }
+            }
+            else { return null; }
+        }
+
+        /// <summary>
+        /// Given the start and the end coordinate will follow the current trend and returns a vald move. (For Target mode only).
+        /// </summary>
+        /// <param name="start"></param>
+        /// <param name="end"></param>
+        /// <returns></returns>
+        private Coordinate followTrend(Coordinate start, Coordinate end)
+        {
+            if (hitCoordinates.Count == 1)
+            {
+                return GetProbOfFour(hitCoordinates.ElementAt(0));
+            }
+            char dir = findDirection(start, end);
+            char oppdirection = 'e';
+            switch (dir)
+            {
+                case 'u': oppdirection = 'd'; break;
+                case 'd': oppdirection = 'u'; break;
+                case 'l': oppdirection = 'r'; break;
+                case 'r': oppdirection = 'l'; break;
+            }
+            Coordinate toHitNext = getValidMove(start, oppdirection);
+            if (toHitNext == null)
+            {
+                toHitNext = getValidMove(start, dir);
+                if (toHitNext == null)
+                {
+                    foreach (var item in hitCoordinates)
+                    {
+                        toVisitLater.Add(item);
+                    }
+                    hitCoordinates.Clear();
+                    hitCoordinates.Add(toVisitLater.ElementAt(0));
+                    toVisitLater.Remove(toVisitLater.ElementAt(0));
+                    toHitNext = GetProbOfFour(hitCoordinates.ElementAt(0));
+                }
+            }
+            return toHitNext;
+        }
+        
+
+        /// <summary>
+        /// initializes the AI
+        /// </summary>
+        private void init()
+        {
+            battleShipBoard = new int[Constants.XMAX, Constants.YMAX];
+            destroyedBoats = new bool[Constants.noOfBoats];
+            for (int i = 0; i < destroyedBoats.Count(); i++)
+            {
+                destroyedBoats[i] = false;
+
+            }
+                hitCoordinates = new List<Coordinate>();
+            toVisitLater = new List<Coordinate>();
+        }
+
+        /// <summary>
+        /// Given the previous hit coordinate and the direction of the hits and the length of the boat destroyed, will remove the boat coordinates from the hitModeCoordinates list.
+        /// </summary>
+        /// <param name="prevHit"></param>
+        /// <param name="direction"></param>
+        /// <param name="boatLength"></param>
+        private void removeBoatCoordinates(Coordinate prevHit, char direction, int boatLength)
+        {
+            bool flag = false;
+            int j = 0;
+            for (int i = 0; i < boatLength; i++)
+            {
+                switch (direction)
+                {
+                    case 'u':
+                        flag = false;
+                        j = 0;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(prevHit.x - i, prevHit.y));
+                            if (flag)
+                            { break; }
+                            j++;
+                        }
+                        hitCoordinates.Remove(hitCoordinates.ElementAt(j));
+                        break;
+                    case 'd':
+                        flag = false;
+                        j = 0;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(prevHit.x + i, prevHit.y));
+                            if (flag)
+                            { break; }
+                            j++;
+                        }
+                        hitCoordinates.Remove(hitCoordinates.ElementAt(j));
+                        break;
+                    case 'l':
+                        flag = false;
+                        j = 0;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(prevHit.x, prevHit.y - i));
+                            if (flag)
+                            { break; }
+                            j++;
+                        }
+                        hitCoordinates.Remove(hitCoordinates.ElementAt(j));
+
+                        break;
+                    case 'r':
+                        flag = false;
+                        j = 0;
+                        foreach (Coordinate item in hitCoordinates)
+                        {
+                            flag = item.contains(new Coordinate(prevHit.x, prevHit.y + i));
+                            if (flag)
+                            { break; }
+                            j++;
+                        }
+                        hitCoordinates.Remove(hitCoordinates.ElementAt(j));
+
+                        break;
+                    case 'e':
+                        break;
+                }
+            }
+        }
+
+
+        /// <summary>
+        /// Coordinate which has the highest probability (no. of possibilities) of the remaining boats passing through the given target point and itself.
+        /// </summary>
+        /// <param name="target"></param>
+        /// <returns></returns>
+        private Coordinate GetProbOfFour(Coordinate target)
+        {
+            int i, j;
+            
+            //up  left down right
+            int[] prob = new int[4];
+            i = target.x;
+            j = target.y;
+            for (int k = 0; k < Constants.noOfBoats; k++)
+            {
+                if (destroyedBoats[k])
+                {
+                    continue;
+                }
+                int boatLength = Constants.boatLength[k];
+                int left = 0, right = 0, top = 0, bottom = 0;
+                //Top
+                while (i - (top + 1) >= 0 && battleShipBoard[i - (top + 1), j] == 0 && top + 1 < boatLength)
+                {
+                    top++;
+                }
+                //Bottom
+                while (i + bottom + 1 < Constants.XMAX && battleShipBoard[i + bottom + 1, j] == 0 && bottom + 1 < boatLength)
+                {
+                    bottom++;
+                }
+                //Left
+                while (j - (left + 1) >= 0 && battleShipBoard[i, j - (left + 1)] == 0 && left + 1 < boatLength)
+                {
+                    left++;
+                }
+                //Right
+                while (j + right + 1 < Constants.YMAX && battleShipBoard[i, j + right + 1] == 0 && right + 1 < boatLength)
+                {
+                    right++;
+                }
+                if (right + left + 1 >= boatLength)
+                {
+                    int m = (right - boatLength + 2 >= 0) ? 0 : right - boatLength + 2;
+                    int n = (left - boatLength + 2 >= 0) ? 0 : left - boatLength + 2;
+                    prob[1] += left + m;
+                    prob[3] += right + n;
+                }
+                if (bottom + top + 1 >= boatLength)
+                {
+                    int o = (bottom - boatLength + 2 >= 0) ? 0 : bottom - boatLength + 2;
+                    int p = (top - boatLength + 2 >= 0) ? 0 : top - boatLength + 2;
+                    prob[0] += top + o;
+                    prob[2] += bottom + p;
+                }
+
+            }
+            List<Coordinate> maxProbCoordinates = new List<Coordinate>();
+            int maxProb = 0;
+            for (j = 0; j < 4; j++)
+            {
+                if (prob[j] > maxProb)
+                {
+                    maxProbCoordinates = new List<Coordinate>();
+                    switch (j % 2)
+                    {
+                        case 0:
+                            maxProbCoordinates.Add(new Coordinate(target.x + j - 1, target.y));
+                            break;
+                        case 1: maxProbCoordinates.Add(new Coordinate(target.x, target.y + j - 2));
+                            break;
+                    }
+                    maxProb = prob[j];
+                }
+                else if (prob[j] == maxProb)
+                {
+                    switch (j % 2)
+                    {
+                        case 0:
+                            maxProbCoordinates.Add(new Coordinate(target.x + j - 1, target.y));
+                            break;
+                        case 1: maxProbCoordinates.Add(new Coordinate(target.x, target.y + j - 2));
+                            break;
+                    }
+                }
+            }
+
+            var random = new Random(int.Parse(Guid.NewGuid().ToString().Substring(0, 8), System.Globalization.NumberStyles.HexNumber));
+            int ran = (int)random.Next(maxProbCoordinates.Count);
+            return maxProbCoordinates[ran];
+        }
+
+        public String levelName()
+        {
+            return "Hard";
+        }
+    }
+}
